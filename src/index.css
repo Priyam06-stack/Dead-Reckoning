@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+/* Tactical High-Contrast Dark Map Styling (Zero Watermark / Clean Tiles) */
+.leaflet-dark-tiles .leaflet-tile-pane {
+  filter: brightness(0.68) invert(1) contrast(2.6) hue-rotate(200deg) saturate(0.25);
+  background-color: #0c1017;
+}
+
+/* Ensure overlays, polylines, vehicle markers, and tooltips are strictly preserved */
+.leaflet-dark-tiles .leaflet-overlay-pane,
+.leaflet-dark-tiles .leaflet-marker-pane,
+.leaflet-dark-tiles .leaflet-popup-pane,
+.leaflet-dark-tiles .leaflet-tooltip-pane {
+  filter: none !important;
+}
+
+.leaflet-container {
+  background-color: #0c1017 !important;
+}

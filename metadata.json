@@ -1,0 +1,6 @@
+{
+  "name": "ISRO NavDR: AI-ML Intelligent Dead Reckoning System",
+  "description": "AI-ML based Intelligent Dead Reckoning navigation system for seamless ground vehicle positioning during GNSS outages in tunnels, urban canyons, and jammed environments.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
