@@ -1,5 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
-import L from 'leaflet';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { NavigationFrame, OutageInterval, NavMode } from '../types/navigation';
 import {
   Layers,
@@ -12,6 +11,12 @@ import {
   Navigation,
   MapPin,
 } from 'lucide-react';
+import {
+  Map,
+  AdvancedMarker,
+  useMap,
+  useMapsLibrary
+} from '@vis.gl/react-google-maps';
 
 interface TrajectoryMapProps {
   frames: NavigationFrame[];
@@ -22,180 +27,72 @@ interface TrajectoryMapProps {
   onOpenRoutePlanner?: () => void;
 }
 
-export const TrajectoryMap: React.FC<TrajectoryMapProps> = ({
-  frames,
-  currentFrameIndex,
-  outages,
-  onSelectFrame,
-  activeMode,
-  onOpenRoutePlanner,
-}) => {
-  const mapContainerRef = useRef<HTMLDivElement | null>(null);
-  const mapInstanceRef = useRef<L.Map | null>(null);
+// Custom hook / component to render Google Maps Polylines
+const MapPolyline = ({ path, options, visible = true }: { path: google.maps.LatLngLiteral[], options: google.maps.PolylineOptions, visible?: boolean }) => {
+  const map = useMap();
+  const mapsLib = useMapsLibrary("maps");
+  const polylineRef = useRef<google.maps.Polyline | null>(null);
 
-  // Layer groups refs
-  const gtPolylineRef = useRef<L.Polyline | null>(null);
-  const gnssPolylineRef = useRef<L.Polyline | null>(null);
-  const rawDrPolylineRef = useRef<L.Polyline | null>(null);
-  const aiDrPolylineRef = useRef<L.Polyline | null>(null);
-  const outagePolygonsRef = useRef<L.LayerGroup | null>(null);
-  const vehicleMarkerRef = useRef<L.Marker | null>(null);
-  const tileLayerRef = useRef<L.TileLayer | null>(null);
-
-  // Basemap style: 'tactical' (dark, watermark-free) | 'satellite' (Esri high-res) | 'street' (OSM)
-  const [mapLayer, setMapLayer] = useState<'tactical' | 'satellite' | 'street'>('tactical');
-
-  // Visibility toggles
-  const [showGT, setShowGT] = useState(true);
-  const [showGNSS, setShowGNSS] = useState(true);
-  const [showRawDR, setShowRawDR] = useState(true);
-  const [showAiDR, setShowAiDR] = useState(true);
-  const [showOutageZones, setShowOutageZones] = useState(true);
-  const [autoCenter, setAutoCenter] = useState(true);
-
-  // Inspector modal/popup state
-  const [inspectedFrame, setInspectedFrame] = useState<NavigationFrame | null>(null);
-
-  const currentFrame = frames[currentFrameIndex] || frames[0];
-
-  // Initialize Leaflet Map
   useEffect(() => {
-    if (!mapContainerRef.current || mapInstanceRef.current) return;
-
-    // Initial center point
-    const initLat = frames[0]?.gtLat ?? 13.0382;
-    const initLon = frames[0]?.gtLon ?? 77.5684;
-
-    const map = L.map(mapContainerRef.current, {
-      center: [initLat, initLon],
-      zoom: 17,
-      zoomControl: false,
-      attributionControl: false,
-    });
-
-    // Tactical Dark Cartography (Clean, high-contrast, zero watermark)
-    // Uses OpenStreetMap tiles with tactical dark styling (100% watermark-free).
-    const defaultTileUrl = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-
-    tileLayerRef.current = L.tileLayer(defaultTileUrl, {
-      maxZoom: 19,
-      subdomains: ['a', 'b', 'c'],
-      attribution: '&copy; OpenStreetMap contributors',
-    }).addTo(map);
-
-    // Zoom control in bottom right
-    L.control.zoom({ position: 'bottomright' }).addTo(map);
-
-    // Polylines matching Elegant Dark design
-    gtPolylineRef.current = L.polyline([], {
-      color: '#FFFFFF',
-      weight: 2.5,
-      dashArray: '5, 5',
-      opacity: 0.9,
-    }).addTo(map);
-
-    gnssPolylineRef.current = L.polyline([], {
-      color: '#06b6d4',
-      weight: 3,
-      opacity: 0.85,
-    }).addTo(map);
-
-    rawDrPolylineRef.current = L.polyline([], {
-      color: '#ef4444',
-      weight: 3,
-      opacity: 0.85,
-    }).addTo(map);
-
-    aiDrPolylineRef.current = L.polyline([], {
-      color: '#60a5fa',
-      weight: 4,
-      opacity: 0.95,
-    }).addTo(map);
-
-    outagePolygonsRef.current = L.layerGroup().addTo(map);
-
-    // Custom Vehicle Heading Marker
-    const vehicleIcon = L.divIcon({
-      className: 'vehicle-marker-icon',
-      html: `
-        <div id="vehicle-glyph" style="
-          width: 32px;
-          height: 32px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          position: relative;
-          transition: transform 0.15s ease-out;
-        ">
-          <div style="
-            position: absolute;
-            width: 28px;
-            height: 28px;
-            border-radius: 50%;
-            background: rgba(96, 165, 250, 0.25);
-            border: 1.5px solid #60a5fa;
-            box-shadow: 0 0 12px rgba(96, 165, 250, 0.6);
-            animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
-          "></div>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" style="filter: drop-shadow(0 0 4px #60a5fa);">
-            <polygon points="12 2, 22 21, 12 17, 2 21" fill="#60a5fa" stroke="#ffffff" stroke-width="1.5" stroke-linejoin="round"/>
-          </svg>
-        </div>
-      `,
-      iconSize: [32, 32],
-      iconAnchor: [16, 16],
-    });
-
-    vehicleMarkerRef.current = L.marker([initLat, initLon], {
-      icon: vehicleIcon,
-      zIndexOffset: 1000,
-    }).addTo(map);
-
-    mapInstanceRef.current = map;
-
+    if (!map || !mapsLib) return;
+    if (!polylineRef.current) {
+      polylineRef.current = new mapsLib.Polyline({ ...options, map });
+    }
     return () => {
-      map.remove();
-      mapInstanceRef.current = null;
+      if (polylineRef.current) {
+        polylineRef.current.setMap(null);
+        polylineRef.current = null;
+      }
     };
-  }, []);
+  }, [map, mapsLib]);
 
-  // Update Trajectory Paths when frames change
   useEffect(() => {
-    if (!mapInstanceRef.current || frames.length === 0) return;
+    if (polylineRef.current) {
+      polylineRef.current.setPath(path);
+    }
+  }, [path]);
 
-    const gtCoords: [number, number][] = frames.map((f) => [f.gtLat, f.gtLon]);
-    const rawDrCoords: [number, number][] = frames.map((f) => [f.rawDrLat, f.rawDrLon]);
-    const aiDrCoords: [number, number][] = frames.map((f) => [f.aiDrLat, f.aiDrLon]);
+  useEffect(() => {
+    if (polylineRef.current) {
+      polylineRef.current.setOptions({ ...options, visible });
+    }
+  }, [options, visible]);
 
-    // GNSS coords only where available (with gaps during outage)
-    const gnssCoords: [number, number][] = frames
-      .filter((f) => f.gnssAvailable && f.gnssLat && f.gnssLon)
-      .map((f) => [f.gnssLat!, f.gnssLon!]);
+  return null;
+};
 
-    if (gtPolylineRef.current) gtPolylineRef.current.setLatLngs(gtCoords);
-    if (gnssPolylineRef.current) gnssPolylineRef.current.setLatLngs(gnssCoords);
-    if (rawDrPolylineRef.current) rawDrPolylineRef.current.setLatLngs(rawDrCoords);
-    if (aiDrPolylineRef.current) aiDrPolylineRef.current.setLatLngs(aiDrCoords);
+// Component for rendering outage zones with InfoWindows on click
+const OutageZonesRenderer = ({ outages, frames, visible }: { outages: OutageInterval[], frames: NavigationFrame[], visible: boolean }) => {
+  const map = useMap();
+  const mapsLib = useMapsLibrary("maps");
+  const polylinesRef = useRef<google.maps.Polyline[]>([]);
 
-    // Update Outage Zone Highlights
-    if (outagePolygonsRef.current) {
-      outagePolygonsRef.current.clearLayers();
-      outages.forEach((outage) => {
-        const oFrames = frames.slice(outage.startIndex, outage.endIndex + 1);
-        if (oFrames.length > 1) {
-          const latLngs: [number, number][] = oFrames.map((f) => [f.gtLat, f.gtLon]);
-          // Draw bold orange/amber outage track
-          const outageTrack = L.polyline(latLngs, {
-            color: '#f59e0b',
-            weight: 8,
-            opacity: 0.45,
-            dashArray: '8, 8',
-          });
+  useEffect(() => {
+    if (!map || !mapsLib) return;
 
-          const midIndex = Math.floor(oFrames.length / 2);
-          const midFrame = oFrames[midIndex];
+    // Clear existing
+    polylinesRef.current.forEach(p => p.setMap(null));
+    polylinesRef.current = [];
 
-          const popupHtml = `
+    if (!visible) return;
+
+    outages.forEach(outage => {
+      const oFrames = frames.slice(outage.startIndex, outage.endIndex + 1);
+      if (oFrames.length > 1) {
+        const path = oFrames.map(f => ({ lat: f.gtLat, lng: f.gtLon }));
+        
+        const p = new mapsLib.Polyline({
+          path,
+          map,
+          strokeColor: '#f59e0b',
+          strokeOpacity: 0.45,
+          strokeWeight: 8,
+          clickable: true,
+        });
+
+        // Basic InfoWindow
+        const infoWindow = new mapsLib.InfoWindow({
+          content: `
             <div style="font-family: monospace; font-size: 11px; padding: 4px; color: #0f172a;">
               <div style="font-weight: bold; color: #b45309; margin-bottom: 2px;">
                 ⚠️ GNSS OUTAGE ZONE (${outage.environment})
@@ -207,126 +104,164 @@ export const TrajectoryMap: React.FC<TrajectoryMapProps> = ({
                 Drift Reduction: ${outage.improvementPct}%
               </div>
             </div>
-          `;
-          outageTrack.bindPopup(popupHtml);
-          outagePolygonsRef.current?.addLayer(outageTrack);
-        }
-      });
-    }
+          `
+        });
 
-    // Fit bounds once on dataset load
-    if (gtCoords.length > 0) {
-      const bounds = L.latLngBounds(gtCoords);
-      mapInstanceRef.current.fitBounds(bounds, { padding: [40, 40] });
-    }
-  }, [frames, outages]);
+        p.addListener('click', (e: any) => {
+          infoWindow.setPosition(e.latLng);
+          infoWindow.open(map);
+        });
 
-  // Update Active Vehicle Marker Position & Heading
+        polylinesRef.current.push(p);
+      }
+    });
+
+    return () => {
+      polylinesRef.current.forEach(p => p.setMap(null));
+    };
+  }, [map, mapsLib, outages, frames, visible]);
+
+  return null;
+};
+
+// Map Controller for panning and fitting bounds
+const MapController = ({ 
+  frames, 
+  currentFrame, 
+  autoCenter, 
+  isFitAllTriggered,
+  isRecenterTriggered
+}: { 
+  frames: NavigationFrame[], 
+  currentFrame: NavigationFrame | null, 
+  autoCenter: boolean,
+  isFitAllTriggered: number,
+  isRecenterTriggered: number
+}) => {
+  const map = useMap();
+  const mapsLib = useMapsLibrary("maps");
+
+  // Initial fit bounds
   useEffect(() => {
-    if (!currentFrame || !vehicleMarkerRef.current) return;
+    if (!map || !mapsLib || frames.length === 0) return;
+    const bounds = new google.maps.LatLngBounds();
+    frames.forEach(f => bounds.extend({ lat: f.gtLat, lng: f.gtLon }));
+    map.fitBounds(bounds, 40);
+  }, [map, mapsLib]); // Only on first load (when map/mapsLib is ready)
 
-    // Use AI DR position during outage, or GNSS/GroundTruth when available
+  // Fit all trigger
+  useEffect(() => {
+    if (!map || !mapsLib || frames.length === 0 || isFitAllTriggered === 0) return;
+    const bounds = new google.maps.LatLngBounds();
+    frames.forEach(f => bounds.extend({ lat: f.gtLat, lng: f.gtLon }));
+    map.fitBounds(bounds, 40);
+  }, [isFitAllTriggered, map, mapsLib, frames]);
+
+  // Recenter trigger
+  useEffect(() => {
+    if (!map || !currentFrame || isRecenterTriggered === 0) return;
     const activeLat = currentFrame.isOutage
       ? currentFrame.aiDrLat
       : (currentFrame.gnssLat ?? currentFrame.gtLat);
     const activeLon = currentFrame.isOutage
       ? currentFrame.aiDrLon
       : (currentFrame.gnssLon ?? currentFrame.gtLon);
+    
+    map.setZoom(18);
+    map.panTo({ lat: activeLat, lng: activeLon });
+  }, [isRecenterTriggered, map, currentFrame]);
 
-    vehicleMarkerRef.current.setLatLng([activeLat, activeLon]);
-
-    // Rotate vehicle glyph
-    const heading = currentFrame.gtHeading;
-    const glyph = document.getElementById('vehicle-glyph');
-    if (glyph) {
-      glyph.style.transform = `rotate(${heading}deg)`;
-    }
-
-    // Auto-center map if enabled
-    if (autoCenter && mapInstanceRef.current) {
-      mapInstanceRef.current.panTo([activeLat, activeLon], {
-        animate: true,
-        duration: 0.2,
-      });
-    }
-  }, [currentFrameIndex, currentFrame, autoCenter]);
-
-  // Handle layer toggles
+  // Auto center logic
   useEffect(() => {
-    if (!mapInstanceRef.current) return;
-    const map = mapInstanceRef.current;
+    if (!map || !autoCenter || !currentFrame) return;
+    const activeLat = currentFrame.isOutage
+      ? currentFrame.aiDrLat
+      : (currentFrame.gnssLat ?? currentFrame.gtLat);
+    const activeLon = currentFrame.isOutage
+      ? currentFrame.aiDrLon
+      : (currentFrame.gnssLon ?? currentFrame.gtLon);
+    
+    map.panTo({ lat: activeLat, lng: activeLon });
+  }, [currentFrame, autoCenter, map]);
 
-    if (gtPolylineRef.current) {
-      if (showGT) map.addLayer(gtPolylineRef.current);
-      else map.removeLayer(gtPolylineRef.current);
-    }
-    if (gnssPolylineRef.current) {
-      if (showGNSS) map.addLayer(gnssPolylineRef.current);
-      else map.removeLayer(gnssPolylineRef.current);
-    }
-    if (rawDrPolylineRef.current) {
-      if (showRawDR) map.addLayer(rawDrPolylineRef.current);
-      else map.removeLayer(rawDrPolylineRef.current);
-    }
-    if (aiDrPolylineRef.current) {
-      if (showAiDR) map.addLayer(aiDrPolylineRef.current);
-      else map.removeLayer(aiDrPolylineRef.current);
-    }
-    if (outagePolygonsRef.current) {
-      if (showOutageZones) map.addLayer(outagePolygonsRef.current);
-      else map.removeLayer(outagePolygonsRef.current);
-    }
-  }, [showGT, showGNSS, showRawDR, showAiDR, showOutageZones]);
+  return null;
+};
 
-  // Switch basemap layer dynamically without watermarks
-  useEffect(() => {
-    if (!mapInstanceRef.current || !tileLayerRef.current) return;
-    tileLayerRef.current.remove();
+export const TrajectoryMap: React.FC<TrajectoryMapProps> = ({
+  frames,
+  currentFrameIndex,
+  outages,
+  onSelectFrame,
+  activeMode,
+  onOpenRoutePlanner,
+}) => {
+  // Basemap style: 'tactical' (dark) | 'satellite' (Esri high-res) | 'street' (OSM)
+  const [mapLayer, setMapLayer] = useState<'tactical' | 'satellite' | 'street'>('tactical');
 
-    const metaEnv = (import.meta as any).env;
-    const cartoKey = metaEnv?.VITE_CARTO_API_KEY;
+  // Visibility toggles
+  const [showGT, setShowGT] = useState(true);
+  const [showGNSS, setShowGNSS] = useState(true);
+  const [showRawDR, setShowRawDR] = useState(true);
+  const [showAiDR, setShowAiDR] = useState(true);
+  const [showOutageZones, setShowOutageZones] = useState(true);
+  const [autoCenter, setAutoCenter] = useState(true);
 
-    if (mapLayer === 'satellite') {
-      tileLayerRef.current = L.tileLayer(
-        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-        {
-          maxZoom: 19,
-          attribution: '&copy; Esri Earthstar Geographics',
-        }
-      ).addTo(mapInstanceRef.current);
-    } else if (mapLayer === 'street') {
-      tileLayerRef.current = L.tileLayer(
-        'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-        {
-          maxZoom: 19,
-          subdomains: ['a', 'b', 'c'],
-          attribution: '&copy; OpenStreetMap contributors',
-        }
-      ).addTo(mapInstanceRef.current);
-    } else {
-      // Tactical Dark mode (Clean OpenStreetMap + Dark filter - 100% watermark-free)
-      const tileUrl = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-      tileLayerRef.current = L.tileLayer(tileUrl, {
-        maxZoom: 19,
-        subdomains: ['a', 'b', 'c'],
-        attribution: '&copy; OpenStreetMap contributors',
-      }).addTo(mapInstanceRef.current);
+  // Fit/Recenter triggers
+  const [fitAllTrigger, setFitAllTrigger] = useState(0);
+  const [recenterTrigger, setRecenterTrigger] = useState(0);
+
+  // Inspector modal/popup state
+  const [inspectedFrame, setInspectedFrame] = useState<NavigationFrame | null>(null);
+
+  const currentFrame = frames[currentFrameIndex] || frames[0];
+
+  const gtCoords = useMemo(() => frames.map(f => ({ lat: f.gtLat, lng: f.gtLon })), [frames]);
+  const rawDrCoords = useMemo(() => frames.map(f => ({ lat: f.rawDrLat, lng: f.rawDrLon })), [frames]);
+  const aiDrCoords = useMemo(() => frames.map(f => ({ lat: f.aiDrLat, lng: f.aiDrLon })), [frames]);
+  const gnssCoords = useMemo(() => 
+    frames.filter(f => f.gnssAvailable && f.gnssLat && f.gnssLon).map(f => ({ lat: f.gnssLat!, lng: f.gnssLon! })), 
+  [frames]);
+
+  const activeLat = currentFrame?.isOutage
+    ? currentFrame.aiDrLat
+    : (currentFrame?.gnssLat ?? currentFrame?.gtLat ?? 0);
+  const activeLon = currentFrame?.isOutage
+    ? currentFrame.aiDrLon
+    : (currentFrame?.gnssLon ?? currentFrame?.gtLon ?? 0);
+  const heading = currentFrame?.gtHeading ?? 0;
+
+  // Custom Dark style array for Google Maps Tactical theme
+  const tacticalDarkStyle = [
+    { elementType: "geometry", stylers: [{ color: "#212121" }] },
+    { elementType: "labels.icon", stylers: [{ visibility: "off" }] },
+    { elementType: "labels.text.fill", stylers: [{ color: "#757575" }] },
+    { elementType: "labels.text.stroke", stylers: [{ color: "#212121" }] },
+    { featureType: "administrative", elementType: "geometry", stylers: [{ color: "#757575" }] },
+    { featureType: "administrative.country", elementType: "labels.text.fill", stylers: [{ color: "#9e9e9e" }] },
+    { featureType: "administrative.land_parcel", stylers: [{ visibility: "off" }] },
+    { featureType: "administrative.locality", elementType: "labels.text.fill", stylers: [{ color: "#bdbdbd" }] },
+    { featureType: "poi", elementType: "labels.text.fill", stylers: [{ color: "#757575" }] },
+    { featureType: "poi.park", elementType: "geometry", stylers: [{ color: "#181818" }] },
+    { featureType: "poi.park", elementType: "labels.text.fill", stylers: [{ color: "#616161" }] },
+    { featureType: "poi.park", elementType: "labels.text.stroke", stylers: [{ color: "#1b1b1b" }] },
+    { featureType: "road", elementType: "geometry.fill", stylers: [{ color: "#2c2c2c" }] },
+    { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#8a8a8a" }] },
+    { featureType: "road.arterial", elementType: "geometry", stylers: [{ color: "#373737" }] },
+    { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#3c3c3c" }] },
+    { featureType: "road.highway.controlled_access", elementType: "geometry", stylers: [{ color: "#4e4e4e" }] },
+    { featureType: "road.local", elementType: "labels.text.fill", stylers: [{ color: "#616161" }] },
+    { featureType: "transit", elementType: "labels.text.fill", stylers: [{ color: "#757575" }] },
+    { featureType: "water", elementType: "geometry", stylers: [{ color: "#000000" }] },
+    { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: "#3d3d3d" }] }
+  ];
+
+  const getMapTypeId = () => {
+    switch (mapLayer) {
+      case 'satellite': return 'satellite';
+      case 'street': return 'roadmap';
+      case 'tactical': return 'roadmap';
+      default: return 'roadmap';
     }
-  }, [mapLayer]);
-
-  const handleRecenter = () => {
-    if (!mapInstanceRef.current || !currentFrame) return;
-    mapInstanceRef.current.setView(
-      [currentFrame.gtLat, currentFrame.gtLon],
-      18,
-      { animate: true }
-    );
-  };
-
-  const handleFitAll = () => {
-    if (!mapInstanceRef.current || frames.length === 0) return;
-    const bounds = L.latLngBounds(frames.map((f) => [f.gtLat, f.gtLon]));
-    mapInstanceRef.current.fitBounds(bounds, { padding: [40, 40] });
   };
 
   return (
@@ -380,7 +315,7 @@ export const TrajectoryMap: React.FC<TrajectoryMapProps> = ({
           </div>
         )}
 
-        {/* Outage Warning Banner if inside outage - directly from Design HTML */}
+        {/* Outage Warning Banner if inside outage */}
         {currentFrame?.isOutage && (
           <div className="bg-red-500/20 text-red-500 text-[10px] font-bold px-3 py-1 border border-red-500/50 rounded-full animate-pulse uppercase flex items-center gap-1.5">
             <AlertTriangle className="w-3.5 h-3.5" />
@@ -403,11 +338,11 @@ export const TrajectoryMap: React.FC<TrajectoryMapProps> = ({
           </button>
         )}
 
-        {/* Basemap Style Switcher (Watermark-Free) */}
+        {/* Basemap Style Switcher */}
         <div className="flex items-center bg-[#0e1116] border border-[#2D333B] rounded p-0.5 text-[10px] font-mono mr-1">
           <button
             type="button"
-            title="Tactical High-Contrast Dark Map (Clean, Zero Watermarks)"
+            title="Tactical High-Contrast Dark Map"
             onClick={() => setMapLayer('tactical')}
             className={`px-2 py-0.5 rounded transition-all font-bold cursor-pointer ${
               mapLayer === 'tactical'
@@ -419,7 +354,7 @@ export const TrajectoryMap: React.FC<TrajectoryMapProps> = ({
           </button>
           <button
             type="button"
-            title="True Orbital Satellite Imagery (Esri, Zero Watermarks)"
+            title="Satellite Imagery"
             onClick={() => setMapLayer('satellite')}
             className={`px-2 py-0.5 rounded transition-all font-bold cursor-pointer ${
               mapLayer === 'satellite'
@@ -431,7 +366,7 @@ export const TrajectoryMap: React.FC<TrajectoryMapProps> = ({
           </button>
           <button
             type="button"
-            title="OpenStreetMap Standard Roads (Zero Watermarks)"
+            title="Google Maps Streets"
             onClick={() => setMapLayer('street')}
             className={`px-2 py-0.5 rounded transition-all font-bold cursor-pointer ${
               mapLayer === 'street'
@@ -459,7 +394,7 @@ export const TrajectoryMap: React.FC<TrajectoryMapProps> = ({
         <button
           id="btn-recenter"
           title="Recenter On Vehicle"
-          onClick={handleRecenter}
+          onClick={() => setRecenterTrigger(t => t + 1)}
           className="p-1.5 rounded text-gray-400 hover:text-white hover:bg-[#20252E] transition-colors"
         >
           <Navigation className="w-4 h-4" />
@@ -468,20 +403,73 @@ export const TrajectoryMap: React.FC<TrajectoryMapProps> = ({
         <button
           id="btn-fit-all"
           title="Fit Whole Trajectory"
-          onClick={handleFitAll}
+          onClick={() => setFitAllTrigger(t => t + 1)}
           className="p-1.5 rounded text-gray-400 hover:text-white hover:bg-[#20252E] transition-colors"
         >
           <Maximize2 className="w-4 h-4" />
         </button>
       </div>
 
-      {/* Map DOM Canvas */}
-      <div
-        ref={mapContainerRef}
-        className={`w-full h-full flex-1 z-0 bg-[#0d0f12] ${
-          mapLayer === 'tactical' ? 'leaflet-dark-tiles' : ''
-        }`}
-      />
+      {/* Map DOM Canvas via @vis.gl/react-google-maps */}
+      <div className="w-full h-full flex-1 z-0 bg-[#0d0f12]">
+        <Map
+          className="w-full h-full"
+          defaultCenter={{ lat: frames[0]?.gtLat ?? 13.0382, lng: frames[0]?.gtLon ?? 77.5684 }}
+          defaultZoom={17}
+          mapId="DEMO_MAP_ID"
+          mapTypeId={getMapTypeId()}
+          colorScheme={mapLayer === 'tactical' ? 'DARK' : undefined}
+          disableDefaultUI={true}
+          gestureHandling="greedy"
+        >
+          <MapController 
+            frames={frames} 
+            currentFrame={currentFrame} 
+            autoCenter={autoCenter} 
+            isFitAllTriggered={fitAllTrigger}
+            isRecenterTriggered={recenterTrigger}
+          />
+          
+          {/* Traces */}
+          <MapPolyline
+            path={gtCoords}
+            visible={showGT}
+            options={{ strokeColor: '#FFFFFF', strokeWeight: 2.5, strokeOpacity: 0.9 }}
+          />
+          <MapPolyline
+            path={gnssCoords}
+            visible={showGNSS}
+            options={{ strokeColor: '#06b6d4', strokeWeight: 3, strokeOpacity: 0.85 }}
+          />
+          <MapPolyline
+            path={rawDrCoords}
+            visible={showRawDR}
+            options={{ strokeColor: '#ef4444', strokeWeight: 3, strokeOpacity: 0.85 }}
+          />
+          <MapPolyline
+            path={aiDrCoords}
+            visible={showAiDR}
+            options={{ strokeColor: '#3b82f6', strokeWeight: 4, strokeOpacity: 0.95 }}
+          />
+
+          <OutageZonesRenderer outages={outages} frames={frames} visible={showOutageZones} />
+
+          {/* Vehicle Marker */}
+          {currentFrame && (
+            <AdvancedMarker position={{ lat: activeLat, lng: activeLon }} zIndex={1000}>
+              <div 
+                className="vehicle-glyph flex items-center justify-center relative transition-transform duration-150 ease-out"
+                style={{ transform: `rotate(${heading}deg)`, width: 32, height: 32 }}
+              >
+                <div className="absolute w-7 h-7 rounded-full bg-blue-400/25 border-[1.5px] border-blue-400 shadow-[0_0_12px_rgba(96,165,250,0.6)] animate-pulse" />
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" style={{ filter: 'drop-shadow(0 0 4px #60a5fa)' }}>
+                  <polygon points="12 2, 22 21, 12 17, 2 21" fill="#60a5fa" stroke="#ffffff" strokeWidth="1.5" strokeLinejoin="round"/>
+                </svg>
+              </div>
+            </AdvancedMarker>
+          )}
+        </Map>
+      </div>
 
       {/* Bottom Trajectory Legend & Layer Toggles */}
       <div className="absolute bottom-3 left-3 z-[500] flex flex-wrap items-center gap-2 bg-black/60 backdrop-blur-md border border-[#2D333B] p-2 rounded-lg shadow-2xl pointer-events-auto text-xs font-mono">

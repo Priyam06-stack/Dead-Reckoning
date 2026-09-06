@@ -260,13 +260,13 @@ const GoogleRouteRenderer: React.FC<RouteRendererProps> = ({
             setRoutePolyline(gPolyline);
 
             if (firstRoute.viewport) {
-              const bounds = new mapsLib.LatLngBounds(
+              const bounds = new google.maps.LatLngBounds(
                 firstRoute.viewport.southwest,
                 firstRoute.viewport.northeast,
               );
               map.fitBounds(bounds, 50);
             } else {
-              const bounds = new mapsLib.LatLngBounds();
+              const bounds = new google.maps.LatLngBounds();
               bounds.extend(origin);
               bounds.extend(destination);
               map.fitBounds(bounds, 50);
@@ -1151,7 +1151,7 @@ export const GoogleMapsRoutePlanner: React.FC<GoogleMapsRoutePlannerProps> = ({
           {/* Map Container */}
           <div className="w-full h-[500px] rounded-lg overflow-hidden relative border border-[#2D333B] bg-[#0A0B0D]">
             {isGoogleMapsConfigured ? (
-              <APIProvider apiKey={apiKey} libraries={["routes", "marker"]}>
+              <>
                 <Map
                   className="w-full h-full"
                   defaultCenter={{ lat: origin.lat, lng: origin.lng }}
@@ -1210,7 +1210,7 @@ export const GoogleMapsRoutePlanner: React.FC<GoogleMapsRoutePlannerProps> = ({
                     simulationPolylines={simulationPolylines}
                   />
                 </Map>
-              </APIProvider>
+              </>
             ) : (
               // Fallback Leaflet Map (Watermark-Free Tactical Dark)
               <div
